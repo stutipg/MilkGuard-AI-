@@ -21,6 +21,8 @@ BASE_DIR = Path(__file__).parent
 DATA_FILE = BASE_DIR / "milkguard_samples.csv"
 FEATURE_FILE = BASE_DIR / "milkguard_image_features.csv"
 MODEL_FILE = BASE_DIR / "milkguard_image_model.joblib"
+MIN_ACCEPTABLE_BRIGHTNESS = 65.0
+MAX_ACCEPTABLE_BRIGHTNESS = 235.0
 TRAINING_COLUMNS = [
     "image_width", "image_height", "mean_red", "mean_green", "mean_blue",
     "mean_brightness", "grayscale_std", "mean_saturation", "edge_variation"
@@ -70,17 +72,20 @@ def extract_image_features(file_obj):
         "mean_saturation": round(saturation, 3),
         "edge_variation": round(edge_variation, 3),
     }
-    if brightness < 65:
-        lighting = "Very dark image; retake in brighter, even light"
-    elif brightness > 235:
-        lighting = "Possibly overexposed; reduce glare"
+    if brightness < MIN_ACCEPTABLE_BRIGHTNESS:
+        lighting = "LOW BRIGHTNESS — image is too dark; retake with more even light"
+        brightness_status = "LOW — outside recommended range"
+    elif brightness > MAX_ACCEPTABLE_BRIGHTNESS:
+        lighting = "HIGH BRIGHTNESS — image may be overexposed; reduce glare and retake"
+        brightness_status = "HIGH — outside recommended range"
     else:
-        lighting = "Brightness in a usable image range"
+        lighting = "Brightness is within the recommended image range"
+        brightness_status = "ACCEPTABLE — within recommended range"
     if contrast < 8:
         contrast_note = "Low visible contrast"
     else:
         contrast_note = "Visible tonal variation"
-    return image, features, lighting, contrast_note
+    return image, features, lighting, contrast_note, brightness_status
 
 
 def generate_demo_readings(sample_id):
@@ -222,7 +227,7 @@ with tab1:
             else:
                 photo_bytes = uploaded.getvalue()
                 try:
-                    image, features, lighting, contrast_note = extract_image_features(io.BytesIO(photo_bytes))
+                    image, features, lighting, contrast_note, brightness_status = extract_image_features(io.BytesIO(photo_bytes))
                     demo_readings = generate_demo_readings(sample_id.strip())
                     record = {
                         "Sample ID": sample_id.strip(),
@@ -246,6 +251,7 @@ with tab1:
                         "Manual - Urea": demo_readings["Urea"],
                         "Manual - Added sugar": demo_readings["Added sugar"],
                         "Image lighting note": lighting,
+                        "Brightness status": brightness_status,
                         "Image contrast note": contrast_note,
                     }
                     for key, value in features.items():
@@ -272,8 +278,16 @@ with tab1:
         metric_cols[1].metric("Contrast", rec.get("Image feature - grayscale_std", "N/A"))
         metric_cols[2].metric("Image size", f"{rec.get('Image feature - image_width', 'N/A')} × {rec.get('Image feature - image_height', 'N/A')}")
         st.write("**Lighting check:**", rec.get("Image lighting note", "N/A"))
+        brightness_status = str(rec.get("Brightness status", ""))
+        if brightness_status.startswith("LOW"):
+            st.error("BRIGHTNESS DISCLAIMER: This photo is too dark (brightness below 65/255). The image may not be suitable for consistent image analysis. Retake it with brighter, even lighting and avoid shadows.")
+        elif brightness_status.startswith("HIGH"):
+            st.error("BRIGHTNESS DISCLAIMER: This photo is too bright (brightness above 235/255). It may be overexposed or affected by glare. Retake it with softer, even lighting and avoid direct reflections.")
+        else:
+            st.success("Brightness check: within the recommended image range (65–235 on a 0–255 scale). This checks photo lighting only; it does not assess milk quality.")
         st.write("**Contrast check:**", rec.get("Image contrast note", "N/A"))
         rgb_df = pd.DataFrame({"Mean pixel value": [rec.get("Image feature - mean_red", 0), rec.get("Image feature - mean_green", 0), rec.get("Image feature - mean_blue", 0)]}, index=["Red", "Green", "Blue"])
+        st.caption("Recommended brightness range: 65–235 on a 0–255 grayscale scale. Outside this range, the app displays a retake disclaimer. This is an image-quality check, not a milk test.")
         st.subheader("RGB image features")
         st.bar_chart(rgb_df)
         model = get_saved_model()
