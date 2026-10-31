@@ -4,3 +4,5 @@ numpy
 Pillow
 qrcode[pil]
 reportlab
+scikit-learn
+joblib
